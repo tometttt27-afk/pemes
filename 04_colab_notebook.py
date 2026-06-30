@@ -98,8 +98,11 @@ all_files = []
 for class_folder in class_folders:
     class_name = class_folder.name
     image_files = list(class_folder.glob('*.jpg')) + \
+                 list(class_folder.glob('*.JPG')) + \
+                 list(class_folder.glob('*.jpeg')) + \
+                 list(class_folder.glob('*.JPEG')) + \
                  list(class_folder.glob('*.png')) + \
-                 list(class_folder.glob('*.jpeg'))
+                 list(class_folder.glob('*.PNG'))
     
     random.shuffle(image_files)
     
