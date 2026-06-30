@@ -76,6 +76,8 @@ def set_seed(seed):
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
 
+import copy
+import random
 set_seed(CONFIG['seed'])
 
 # =====================================================================
@@ -99,7 +101,7 @@ for class_folder in class_folders:
                  list(class_folder.glob('*.png')) + \
                  list(class_folder.glob('*.jpeg'))
     
-    np.random.shuffle(image_files)
+    random.shuffle(image_files)
     
     n_total = len(image_files)
     n_train = int(n_total * CONFIG['train_ratio'])
@@ -202,19 +204,21 @@ test_dataset = RiceDiseaseDataset(
 )
 
 # Create dataloaders
+pin_memory = torch.cuda.is_available()
+
 train_loader = DataLoader(
     train_dataset, batch_size=CONFIG['batch_size'], shuffle=True,
-    num_workers=CONFIG['num_workers'], pin_memory=True
+    num_workers=CONFIG['num_workers'], pin_memory=pin_memory
 )
 
 val_loader = DataLoader(
     val_dataset, batch_size=CONFIG['batch_size'], shuffle=False,
-    num_workers=CONFIG['num_workers'], pin_memory=True
+    num_workers=CONFIG['num_workers'], pin_memory=pin_memory
 )
 
 test_loader = DataLoader(
     test_dataset, batch_size=CONFIG['batch_size'], shuffle=False,
-    num_workers=CONFIG['num_workers'], pin_memory=True
+    num_workers=CONFIG['num_workers'], pin_memory=pin_memory
 )
 
 print("✓ Datasets and DataLoaders created")
@@ -227,7 +231,8 @@ print(f"  Train: {len(train_loader)} batches | Val: {len(val_loader)} batches | 
 class MobileNetV2Classifier(nn.Module):
     def __init__(self, num_classes=5, pretrained=True):
         super().__init__()
-        self.mobilenet = models.mobilenet_v2(pretrained=pretrained)
+        weights = models.MobileNet_V2_Weights.IMAGENET1K_V1 if pretrained else None
+        self.mobilenet = models.mobilenet_v2(weights=weights)
         
         # Freeze early layers
         for param in self.mobilenet.features[:15].parameters():
@@ -262,7 +267,7 @@ print(f"  Trainable parameters: {trainable_params:,}")
 
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(model.parameters(), lr=CONFIG['learning_rate'], weight_decay=1e-5)
-scheduler = ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=2, verbose=True)
+scheduler = ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=2)
 
 history = {
     'train_loss': [], 'train_acc': [],
@@ -289,7 +294,7 @@ for epoch in range(CONFIG['epochs']):
     total_train = 0
     
     train_pbar = tqdm(train_loader, desc=f"Epoch {epoch+1} [TRAIN]")
-    for images, labels, _ in train_pbar:
+    for batch_idx, (images, labels, _) in enumerate(train_pbar):
         images, labels = images.to(DEVICE), labels.to(DEVICE)
         
         optimizer.zero_grad()
@@ -304,7 +309,7 @@ for epoch in range(CONFIG['epochs']):
         train_acc += (predicted == labels).sum().item()
         
         train_pbar.set_postfix({
-            'loss': f"{train_loss/(total_train//CONFIG['batch_size']):.4f}",
+            'loss': f"{train_loss/(batch_idx+1):.4f}",
             'acc': f"{100*train_acc/total_train:.2f}%"
         })
     
@@ -318,7 +323,7 @@ for epoch in range(CONFIG['epochs']):
     
     val_pbar = tqdm(val_loader, desc=f"Epoch {epoch+1} [VAL]")
     with torch.no_grad():
-        for images, labels, _ in val_pbar:
+        for batch_idx, (images, labels, _) in enumerate(val_pbar):
             images, labels = images.to(DEVICE), labels.to(DEVICE)
             outputs = model(images)
             loss = criterion(outputs, labels)
@@ -329,7 +334,7 @@ for epoch in range(CONFIG['epochs']):
             val_acc += (predicted == labels).sum().item()
             
             val_pbar.set_postfix({
-                'loss': f"{val_loss/(total_val//CONFIG['batch_size']):.4f}",
+                'loss': f"{val_loss/(batch_idx+1):.4f}",
                 'acc': f"{100*val_acc/total_val:.2f}%"
             })
     
@@ -345,7 +350,7 @@ for epoch in range(CONFIG['epochs']):
     # Save best model
     if epoch_val_acc > best_val_acc:
         best_val_acc = epoch_val_acc
-        best_model_state = model.state_dict().copy()
+        best_model_state = copy.deepcopy(model.state_dict())
         print(f"✓ Best model saved! Val Acc: {epoch_val_acc:.2f}%")
     
     # Learning rate scheduling
@@ -487,14 +492,6 @@ print("✓ Anda bisa download semua hasil training dari sana")
 # Uncomment untuk test prediction:
 """
 # Prediction function
-from torchvision.transforms.functional import to_pil_image
-
-inv_transform = transforms.Compose([
-    transforms.Normalize(
-        mean=[-0.485/0.229, -0.456/0.224, -0.406/0.225],
-        std=[1/0.229, 1/0.224, 1/0.225]
-    )
-])
 
 def predict_image(image_path):
     image = Image.open(image_path).convert('RGB')
